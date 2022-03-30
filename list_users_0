@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+const Core = require('@alicloud/pop-core');
+
+var client = new Core({
+    accessKeyId: process.env['ACCESS_KEY_ID'],
+    accessKeySecret: process.env['ACCESS_KEY_SECRET'],
+    endpoint: 'https://ram.aliyuncs.com',
+    apiVersion: '2015-05-01'
+});
+
+var stsclient = new Core({
+    accessKeyId: process.env['ACCESS_KEY_ID'],
+    accessKeySecret: process.env['ACCESS_KEY_SECRET'],
+    endpoint: 'https://sts.aliyuncs.com',
+    apiVersion: '2015-04-01'
+});
+
+(async ()=> {
+    const accountId = await getAccountId();
+    const users = await listUsers();
+    const userList = [];    
+    console.log('arn, user_name, user_create_date, password_enabled, last_login_date, mfa_acmfa_bind_requiredtive, access_key_1_id, access_key_1_active, access_key_1_create_date, access_key_2_id, access_key_2_active, access_key_2_create_date');
+    for (let user of users) {
+        user.arn = `acs:ram:${accountId}:user/${user.UserName}`;        
+        user.user_name = user.UserName;
+        user.user_create_date = user.CreateDate;
+        await fillLoginInfo(user);
+        await fillAccessKeyInfo(user);
+        console.log([user.arn, user.user_name, user.user_create_date, user.password_enabled, user.last_login_date, user.mfa_bind_required, 
+        user.access_key_1_id, user.access_key_1_active, user.access_key_1_create_date, 
+        user.access_key_2_id, user.access_key_2_active, user.access_key_2_create_date].join(', '))
+    }    
+})();
+
+async function getAccountId() {
+    const response = await stsclient.request('GetCallerIdentity');
+    return response.AccountId;
+}
+async function listUsers(marker = null) {
+    const request = {};
+    if (marker) {
+        request.Marker = marker;
+    }
+    let response;
+    try {
+        response = await client.request('ListUsers', request);
+    } catch (e) {
+        return [];
+    }
+    
+    if (response.IsTruncated) {
+        const users = await listUsers(response.Marker);
+        response.Users.User = response.Users.User.concat(users);
+    }
+    return response.Users.User;
+}
+
+async function fillLoginInfo(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('GetLoginProfile', request);        
+        const loginProfile = response.LoginProfile;
+        user.password_enabled = true;
+        user.mfa_bind_required = loginProfile.MFABindRequired;
+        const getUserResponse = await client.request('GetUser', request);
+        user.last_login_date = getUserResponse.User.LastLoginDate;
+    } catch (e) {
+        user.password_enabled = false;
+    }       
+}
+
+async function fillAccessKeyInfo(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('ListAccessKeys', request);   
+        const accessKeys = response.AccessKeys.AccessKey;
+        accessKeys.forEach((item, index) => {
+            const i = index + 1;
+            user[`access_key_${i}_id`] = item.AccessKeyId;
+            user[`access_key_${i}_active`] = item.Status;
+            user[`access_key_${i}_create_date`] = item.CreateDate;    
+        });        
+    } catch (e) {
+
+    }
+}
+
