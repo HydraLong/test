@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+const Core = require('@alicloud/pop-core');
+
+var client = new Core({
+    accessKeyId: process.env['ACCESS_KEY_ID'],
+    accessKeySecret: process.env['ACCESS_KEY_SECRET'],
+    endpoint: 'https://ram.aliyuncs.com',
+    apiVersion: '2015-05-01'
+});
+
+var stsclient = new Core({
+    accessKeyId: process.env['ACCESS_KEY_ID'],
+    accessKeySecret: process.env['ACCESS_KEY_SECRET'],
+    endpoint: 'https://sts.aliyuncs.com',
+    apiVersion: '2015-04-01'
+});
+
+
+(async ()=> {
+    const accountId = await getAccountId();
+    const users = await listUsers();
+    const userList = [];  
+    //output excel firstline  
+    console.log('user_name, MFABindRequired');
+    for (let user of users) {     
+        user.user_name = user.UserName;
+        //login account
+        await fillLoginInfo(user);
+        await listPoliciesForUser(user);
+        //await GetLoginProfile(user);
+		//user.mfa_bind_required = loginProfile.MFABindRequired;    
+
+        //user.user_create_date = user.CreateDate;
+
+
+        //output accesskeyinfo
+        //await fillAccessKeyInfo(user);
+
+        console.log([user.user_name,user.policyname_1,user.policyname_2,user.policyname_3,user.policyname_4,user.policyname_5,user.policyname_6,user.attachdate_1,user.attachdate_2,user.attachdate_3,user.attachdate_4,user.attachdate_5,user.attachdate_6].join(', '))
+    }    
+})();
+
+async function getAccountId() {
+    const response = await stsclient.request('GetCallerIdentity');
+    return response.AccountId;
+}
+async function listUsers(marker = null) {
+    const request = {};
+    if (marker) {
+        request.Marker = marker;
+    }
+    let response;
+    try {
+        response = await client.request('ListUsers', request);
+    } catch (e) {
+        return [];
+    }
+    
+    if (response.IsTruncated) {
+        const users = await listUsers(response.Marker);
+        response.Users.User = response.Users.User.concat(users);
+    }
+    return response.Users.User;
+}
+
+async function fillLoginInfo(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('GetLoginProfile', request);        
+        const loginProfile = response.LoginProfile;
+        user.password_enabled = true;
+        user.mfa_bind_required = loginProfile.MFABindRequired;
+        const getUserResponse = await client.request('GetUser', request);
+        user.last_login_date = getUserResponse.User.LastLoginDate;
+    } catch (e) {
+        user.password_enabled = false;
+    }       
+}
+
+async function GetLoginProfile(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('GetLoginProfile', request);        
+        const loginProfile = response.LoginProfile;
+        //user.password_enabled = true;
+        user.mfa_bind_required = loginProfile.MFABindRequired;
+        //const getUserResponse = await client.request('GetUser', request);
+        //user.last_login_date = getUserResponse.User.LastLoginDate;
+    } catch (e) {
+        //user.password_enabled = false;
+    }       
+}
+
+async function listPoliciesForUser(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('ListPoliciesForUser', request);        
+        const policyName = response.Policies.Policy;
+
+        policyName.forEach((item,index) => {
+            const i = index +1;
+            if (item.AttachDate.indexOf("2022") != -1) {
+                if( (item.PolicyName.indexOf("ull") != -1) || (item.PolicyName.indexOf("dmin") != -1)){
+                    user[`policyname_${i}`] = item.PolicyName;
+                    user[`attachdate_${i}`] = item.AttachDate;
+
+                }
+            else{
+                i = i -1;
+            }
+            } 
+            
+        }
+        );
+
+    } catch (e) {
+
+    }       
+}
+
+async function fillAccessKeyInfo(user) {
+    try {
+        const request = { UserName: user.UserName };
+        const response = await client.request('ListAccessKeys', request);   
+        const accessKeys = response.AccessKeys.AccessKey;
+        accessKeys.forEach((item, index) => {
+            const i = index + 1;
+            user[`access_key_${i}_id`] = item.AccessKeyId;
+            user[`access_key_${i}_active`] = item.Status;
+            user[`access_key_${i}_create_date`] = item.CreateDate;    
+        });        
+    } catch (e) {
+
+    }
+
+}
+
+
+
+
